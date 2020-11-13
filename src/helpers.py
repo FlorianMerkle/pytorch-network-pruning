@@ -80,7 +80,7 @@ def _train(model, train_data, test_data, epochs, device):
     optimizer = optim.Adam(model.parameters())
     for epoch in range(epochs):  # loop over the dataset multiple times
         t0 = time.time()
-        running_loss, acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0, 0.0
+        acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0
 
         
         for i, data in enumerate(train_data, 0):
@@ -104,14 +104,12 @@ def _train(model, train_data, test_data, epochs, device):
             optimizer.step()
 
                 # print statistics
-            running_loss += loss.item()
-            acc_epoch_loss += running_loss 
+            acc_epoch_loss += loss.item() 
             avg_epoch_loss = acc_epoch_loss / (i+1)
             acc_epoch_accuracy += accuracy
             avg_epoch_accuracy = acc_epoch_accuracy / (i+1)
             if i%20 == 0:
-                print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, running_loss, accuracy))
-            running_loss = 0.0
+                print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
         t1 = time.time()
         accuracy, loss = _evaluate_model(model, test_data, device, criterion)
         #print('duration:', t1-t0,'- train loss: ',avg_epoch_loss,' - train accuracy: ',avg_epoch_accuracy,' - validation accuracy: ', accuracy,' - validation loss: ', loss)
