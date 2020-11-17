@@ -3,7 +3,8 @@ import torch.nn.functional as F
 import torch
 
 from . custom_modules import MaskedLinearLayer, MaskedConvLayer, ResBlock
-from . helpers import _train, _train_adv, _identify_layers, _evaluate_sparsity
+from . helpers import _identify_layers, _evaluate_sparsity
+from . training import _fit, _fit_adv, _fit_free, _fit_fast, _fit_fast_with_double_update
 from . pruning import _prune_random_local_unstruct, _prune_magnitude_global_unstruct, _prune_random_local_struct, _prune_random_global_struct, _prune_magnitude_local_struct, _prune_magnitude_global_struct, _prune_magnitude_local_unstruct
 
 class ResNet(nn.Module):
@@ -40,7 +41,7 @@ class ResNet(nn.Module):
         x = self.d1(x)
         return (x)
     def fit(self, train_data, val_data, epochs, device):
-        _train(self, train_data, val_data, epochs, device)
+        _fit(self, train_data, val_data, epochs, device)
         return True
         
 class MNIST_CNN(nn.Module):
@@ -68,11 +69,11 @@ class MNIST_CNN(nn.Module):
         return x
     
     def fit(self, train_data, val_data, epochs, device):
-        _train(self, train_data, val_data, epochs, device)
+        _fit(self, train_data, val_data, epochs, device)
         return True
     
     def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD'):
-        _train_adv(self, train_data, test_data, epochs, device, attack, epsilon)
+        _fit_adv(self, train_data, test_data, epochs, device, attack, epsilon)
         return True
     
 class CIFAR_CNN(nn.Module):
@@ -106,10 +107,19 @@ class CIFAR_CNN(nn.Module):
         return x
     
     def fit(self, train_data, val_data, epochs, device):
-        return _train(self, train_data, val_data, epochs, device)
+        return _fit(self, train_data, val_data, epochs, device)
     
     def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD'):
-        return _train_adv(self, train_data, test_data, epochs, device, attack, epsilon)
+        return _fit_adv(self, train_data, test_data, epochs, device, attack, epsilon)
+    
+    def fit_free(self, train_loader, val_loader , epochs, device, number_of_replays=7, eps = 8/255):
+        return _fit_free(self, train_loader, val_loader , epochs, device, number_of_replays, eps)
+    
+    def fit_fast(self, train_loader, val_loader , epochs, device, eps = 8/255):
+        return _fit_fast(self, train_loader, val_loader , epochs, device, eps)
+    
+    def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255):
+        return _fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps)
     
     def identify_layers(self):
         print('identifying layers')
