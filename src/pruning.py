@@ -1,6 +1,6 @@
 import torch
-def _prune_random_local_unstruct(model, ratio):
-    def prune(model, ratio, weights_list, masks_list):
+def _prune_random_local_unstruct(model, ratio, device):
+    def prune(model, ratio, weights_list, masks_list, device):
         params = model.state_dict()
         for i, _ in enumerate(weights_list):
             weights = params[weights_list[i]]
@@ -28,10 +28,11 @@ def _prune_random_local_unstruct(model, ratio):
     weights = prune(model, ratio, model.fully_connected_weights, model.fully_connected_masks)
     return weights
 
-def _prune_magnitude_global_unstruct(model, ratio):
+def _prune_magnitude_global_unstruct(model, ratio, device):
     params = model.state_dict()
-    flat_weights = torch.empty(0)
-    flat_masks = torch.empty(0)
+
+    flat_weights = torch.empty(0).to(device)
+    flat_masks = torch.empty(0).to(device)
     all_masks = model.conv_masks + model.fully_connected_masks
     all_weights = model.conv_weights+model.fully_connected_weights
     for i, _ in enumerate(all_weights):
@@ -54,8 +55,8 @@ def _prune_magnitude_global_unstruct(model, ratio):
 
 
 # rework kernel/filter wise
-def _prune_random_local_struct(model, ratio, prune_dense_layers=False, structure='kernel'):
-    def prune_filters(model, ratio, params):
+def _prune_random_local_struct(model, ratio, device, prune_dense_layers=False, structure='kernel'):
+    def prune_filters(model, ratio, params, device):
         for i, _ in enumerate(model.conv_weights):
             # shape = (3,3,64,128)
             weight_layer = params[model.conv_weights[i]]
@@ -74,7 +75,7 @@ def _prune_random_local_struct(model, ratio, prune_dense_layers=False, structure
                 mask_layer[filter_to_prune] = torch.zeros_like(mask_layer[filter_to_prune])        
         return params
     
-    def prune_kernels(model, ratio, weights):
+    def prune_kernels(model, ratio, weights, device):
         for i, _ in enumerate(model.conv_weights):
             # shape = (3,3,64,128)
             weight_layer = params[model.conv_weights[i]]
@@ -97,16 +98,16 @@ def _prune_random_local_struct(model, ratio, prune_dense_layers=False, structure
             params[model.conv_masks[i]] = masks.view(shape)
         return params
     
-    def prune_dense(model, ratio, weights):
+    def prune_dense(model, ratio, weights, device):
         raise Exception('not implemented')
         return
     params = model.state_dict()
     if structure == 'filter':
-        params = prune_filters(model, ratio, params)
+        params = prune_filters(model, ratio, params, device)
     if structure == 'kernel':
-        params = prune_kernels(model, ratio, params)
+        params = prune_kernels(model, ratio, params, device)
     if prune_dense_layers==True:
-        params = prune_dense(model, ratio, params)
+        params = prune_dense(model, ratio, params, device)
     model.load_state_dict(params)
     return params
 
@@ -114,8 +115,8 @@ def _prune_random_global_struct(model, ratio, prune_dense_layers=False):
     raise Warning('Not yet implemented')
     return False
 
-def _prune_magnitude_local_struct(model, ratio, prune_dense_layers=False, structure='kernel'):
-    def prune_filters(model, ratio, params):
+def _prune_magnitude_local_struct(model, ratio, device, prune_dense_layers=False, structure='kernel'):
+    def prune_filters(model, ratio, params, device):
         for i, _ in enumerate(model.conv_weights):
             weight_layer = params[model.conv_weights[i]]
             mask_layer = params[model.conv_masks[i]]
@@ -136,7 +137,7 @@ def _prune_magnitude_local_struct(model, ratio, prune_dense_layers=False, struct
             params[model.conv_masks[i]] = mask_layer
         return params
     
-    def prune_kernels(model, ratio, params):
+    def prune_kernels(model, ratio, params, device):
         for i, _ in enumerate(model.conv_weights):
             weight_layer = params[model.conv_weights[i]]
             mask_layer = params[model.conv_masks[i]]
@@ -158,24 +159,24 @@ def _prune_magnitude_local_struct(model, ratio, prune_dense_layers=False, struct
             params[model.conv_masks[i]] = masks.view(shape)
         return params
     
-    def prune_dense_layers(model, ratio, weights):
+    def prune_dense_layers(model, ratio, weights, device):
         raise Exception('not implemented')
         return
     
     params = model.state_dict()
     if structure == 'kernel':
-        params = prune_kernels(model,ratio, params)
+        params = prune_kernels(model,ratio, params, device)
     if structure == 'filter':
-        params = prune_filters(model,ratio, params)
+        params = prune_filters(model,ratio, params, device)
     
     if prune_dense_layers==True:
-        params = prune_dense(model, ratio, params)
+        params = prune_dense(model, ratio, params, device)
         
     model.load_state_dict(params)
     return params
     
-def _prune_magnitude_global_struct(model, ratio, prune_dense_layers=False,structure='kernel'):
-    def prune_filters(model, ratio, params):
+def _prune_magnitude_global_struct(model, ratio, device, prune_dense_layers=False,structure='kernel'):
+    def prune_filters(model, ratio, params, device):
         all_filters = torch.empty(0)
         all_masks = torch.empty(0)
         vals = []
@@ -201,13 +202,12 @@ def _prune_magnitude_global_struct(model, ratio, prune_dense_layers=False,struct
             z = z + shape[0]
         return params
     
-    def prune_kernels(model, ratio, params):
+    def prune_kernels(model, ratio, params, device):
         all_kernels = torch.empty(0)
         all_masks = torch.empty(0)
         vals = []
         for i, _ in enumerate(model.conv_weights):
             weight_layer = params[model.conv_weights[i]]
-            #print(model.conv_masks)
             mask_layer = params[model.conv_masks[i]]
             shape = weight_layer.shape
             kernels = weight_layer.view(shape[0]*shape[1], shape[2], shape[3])
@@ -232,22 +232,22 @@ def _prune_magnitude_global_struct(model, ratio, prune_dense_layers=False,struct
             z = z + shape[0]*shape[1]
         return params
         
-    def prune_dense_layers(model, ratio):
+    def prune_dense_layers(model, ratio, device):
         raise Exception('not implemented')
         return
     
     params = model.state_dict()
     if structure == 'filter':
-        params = prune_filters(model, ratio, params)
+        params = prune_filters(model, ratio, params, device)
     if structure == 'kernel':
-        params = prune_kernels(model, ratio, params)
+        params = prune_kernels(model, ratio, params, device)
     if prune_dense_layers==True:
-        params = prune_dense_layers(model, ratio, params)
+        params = prune_dense_layers(model, ratio, params, device)
     model.load_state_dict(params)
     return params
 
-def _prune_magnitude_local_unstruct(model, ratio, scope='layer'):
-    def prune_conv_layers_layerwise(model, ratio, params):
+def _prune_magnitude_local_unstruct(model, ratio, device, scope='layer'):
+    def prune_conv_layers_layerwise(model, ratio, params, device):
         for i, _ in enumerate(model.conv_weights):
             weight_layer = params[model.conv_weights[i]]
             mask_layer = params[model.conv_masks[i]]
@@ -263,7 +263,7 @@ def _prune_magnitude_local_unstruct(model, ratio, scope='layer'):
             params[model.conv_masks[i]] = flat_masks.view(shape)
         return params
     
-    def prune_conv_layers_filterwise(model, ratio, params):
+    def prune_conv_layers_filterwise(model, ratio, params, device):
         for i, _ in enumerate(model.conv_weights):
             weight_layer = params[model.conv_weights[i]]
             mask_layer = params[model.conv_masks[i]]
@@ -286,7 +286,7 @@ def _prune_magnitude_local_unstruct(model, ratio, scope='layer'):
             params[model.conv_masks[i]] = mask_layer.view(shape)
         return params
         
-    def prune_dense_layers(model, ratio, params):
+    def prune_dense_layers(model, ratio, params, device):
         for i, _ in enumerate(model.fully_connected_weights):
             weight_layer = params[model.fully_connected_weights[i]]
             mask_layer = params[model.fully_connected_masks[i]]
@@ -305,11 +305,11 @@ def _prune_magnitude_local_unstruct(model, ratio, scope='layer'):
     
     params = model.state_dict()
     if scope == 'layer':
-        params = prune_conv_layers_layerwise(model,ratio, params)
+        params = prune_conv_layers_layerwise(model,ratio, params, device)
     if scope == 'filter':
-        params = prune_conv_layers_filterwise(model,ratio, params)
+        params = prune_conv_layers_filterwise(model,ratio, params, device)
     if scope != 'filter' and scope != 'layer':
         raise Exception('scope should be one of "layer" and "filter"')
-    params = prune_dense_layers(model,ratio, params)
+    params = prune_dense_layers(model,ratio, params, device)
     model.load_state_dict(params)
     return params

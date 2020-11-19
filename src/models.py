@@ -106,19 +106,19 @@ class CIFAR_CNN(nn.Module):
         x = self.fc3(x)
         return x
     
-    def fit(self, train_data, val_data, epochs, device):
+    def fit(self, train_data, val_data, epochs, device, eps = 8/255, number_of_replays=7):
         return _fit(self, train_data, val_data, epochs, device)
     
-    def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD'):
+    def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD', eps = 8/255, number_of_replays=7):
         return _fit_adv(self, train_data, test_data, epochs, device, attack, epsilon)
     
-    def fit_free(self, train_loader, val_loader , epochs, device, number_of_replays=7, eps = 8/255):
+    def fit_free(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7):
         return _fit_free(self, train_loader, val_loader , epochs, device, number_of_replays, eps)
     
-    def fit_fast(self, train_loader, val_loader , epochs, device, eps = 8/255):
+    def fit_fast(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7):
         return _fit_fast(self, train_loader, val_loader , epochs, device, eps)
     
-    def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255):
+    def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7):
         return _fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps)
     
     def identify_layers(self):
@@ -129,32 +129,32 @@ class CIFAR_CNN(nn.Module):
     def evaluate_sparsity(self):
         return _evaluate_sparsity(self)
     
-    def prune_random_local_unstruct(self, ratio):
-        _prune_random_local_unstruct(self, ratio)
+    def prune_random_local_unstruct(self, ratio, device):
+        _prune_random_local_unstruct(self, ratio, device)
         return self.evaluate_sparsity()
 
-    def prune_magnitude_global_unstruct(self, ratio):
-        _prune_magnitude_global_unstruct(self, ratio)
+    def prune_magnitude_global_unstruct(self, ratio, device):
+        _prune_magnitude_global_unstruct(self, ratio, device)
         return self.evaluate_sparsity()
 
-    def prune_random_local_struct(self, ratio, prune_dense_layers=False, structure='kernel'):
-        _prune_random_local_struct(self, ratio, prune_dense_layers=False, structure='kernel')
+    def prune_random_local_struct(self, ratio, device, prune_dense_layers=False, structure='kernel'):
+        _prune_random_local_struct(self, ratio, device, prune_dense_layers=False, structure='kernel')
         return self.evaluate_sparsity()
 
-    def prune_random_global_struct(self, ratio, prune_dense_layers=False):
-        _prune_random_global_struct(self, ratio, prune_dense_layers=False)
+    def prune_random_global_struct(self, ratio, device, prune_dense_layers=False):
+        _prune_random_global_struct(self, ratio, device, prune_dense_layers=False)
         return False
 
-    def prune_magnitude_local_struct(self, ratio, prune_dense_layers=False, structure='kernel'):
-        _prune_magnitude_local_struct(self, ratio, prune_dense_layers=False, structure='kernel')
+    def prune_magnitude_local_struct(self, ratio, device, prune_dense_layers=False, structure='kernel'):
+        _prune_magnitude_local_struct(self, ratio, device, prune_dense_layers=False, structure='kernel')
         return self.evaluate_sparsity()
 
-    def prune_magnitude_global_struct(self, ratio, prune_dense_layers=False,structure='kernel'):
-        _prune_magnitude_global_struct(self, ratio, prune_dense_layers=False,structure='kernel')
+    def prune_magnitude_global_struct(self, ratio, device, prune_dense_layers=False,structure='kernel'):
+        _prune_magnitude_global_struct(self, ratio, device, prune_dense_layers=False,structure='kernel')
         return self.evaluate_sparsity()
 
-    def prune_magnitude_local_unstruct(self, ratio, scope='layer'):
-        _prune_magnitude_local_unstruct(self, ratio, scope='layer')
+    def prune_magnitude_local_unstruct(self, ratio, device, scope='layer'):
+        _prune_magnitude_local_unstruct(self, ratio, device, scope='layer')
         return self.evaluate_sparsity()
         
     
