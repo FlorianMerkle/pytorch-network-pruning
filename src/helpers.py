@@ -105,6 +105,7 @@ def safe_model(PATH, model, optimizer, description='N/A', loss='N/A',epoch='N/A'
     torch.save({
         'description': description,
         'epoch': epoch,
+        'train_stats': model.train_stats,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': loss,
@@ -118,5 +119,6 @@ def load_model(model, PATH, optim='ADAM'):
     checkpoint = torch.load(PATH)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    model.train_stats = checkpoint['train_stats']
     model.train()
     return model

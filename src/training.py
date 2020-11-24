@@ -3,10 +3,13 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from foolbox import PyTorchModel, accuracy, samples
+from foolbox.attacks import LinfPGD, FGSM, L0BrendelBethgeAttack, L2CarliniWagnerAttack
 
-def _fit_adv(model, train_data, test_data, epochs, device, attack, epsilon):
+def _fit_adv(model, train_data, test_data, epochs, device, attack, epsilon, patience=None):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
+    total_time = 0
     train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
     for epoch in range(epochs):  # loop over the dataset multiple times
         t0 = time.time()
@@ -44,40 +47,38 @@ def _fit_adv(model, train_data, test_data, epochs, device, attack, epsilon):
                 print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, running_loss, accuracy))
             running_loss = 0.0
         t1 = time.time()
+        total_time +=t1-t0
         accuracy, loss = _evaluate_model(model, test_data, device, criterion)
         print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.2f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
         train_loss_hist.append(avg_epoch_loss)
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        patience = 5
-        if check_early_stopping(val_loss_hist, i, patience) == True:
-            break
     print('Finished Training')
-    return {
-        'criterion': criterion,
-        'optimizer': optimizer,
-        'hist': {
-            'train_loss': train_loss_hist,
-            'train_accuracy': train_acc_hist,
-            'validation_loss': val_loss_hist,
-            'validation_accuracy': val_acc_hist
-        },
-        'val_accuracy': accuracy
-    }
+    model.train_stats['train_loss_history'] += train_loss_hist
+    model.train_stats['train_accuracy_history'] += train_acc_hist
+    model.train_stats['validation_loss_history'] += val_loss_hist
+    model.train_stats['validation_accuracy_history'] += val_acc_hist
+    model.train_stats['epochs_trained'] += epochs
+    model.train_stats['total_training_time'] += total_time
+    model.train_stats['criterion'].append(criterion) 
+    model.train_stats['optimizer'].append(optimizer)
 
-def _fit(model, train_data, test_data, epochs, device):
+    return model.train_stats
+
+def _fit(model, train_loader, val_loader, epochs, device, patience=None):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
+
+    total_time = 0
+    epochs_trained = 0
     train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
     for epoch in range(epochs):  # loop over the dataset multiple times
         t0 = time.time()
         acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0
-
         
-        for i, data in enumerate(train_data, 0):
-            # get the inputs; data is a list of [inputs, labels]
-            #if i == 0:
+        
+        for i, data in enumerate(train_loader, 0):
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -88,9 +89,9 @@ def _fit(model, train_data, test_data, epochs, device):
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
 
-            total = labels.size(0)
+            batchsize = labels.size(0)
             correct = (predicted == labels).sum().item()
-            accuracy = 100 * correct / total
+            accuracy = 100 * correct / batchsize
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -103,6 +104,7 @@ def _fit(model, train_data, test_data, epochs, device):
             if i%10 == 0:
                 print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
         t1 = time.time()
+        total_time += t1 - t0
         accuracy, loss = _evaluate_model(model, test_data, device, criterion)
         #print('duration:', t1-t0,'- train loss: ',avg_epoch_loss,' - train accuracy: ',avg_epoch_accuracy,' - validation accuracy: ', accuracy,' - validation loss: ', loss)
         print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.2f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
@@ -110,29 +112,41 @@ def _fit(model, train_data, test_data, epochs, device):
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        patience = 3
-        if check_early_stopping(val_loss_hist, i, patience) == True:
+        if epoch%3==0:
+            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
+        data = {
+            'l_0_robustness':l_0_robustness, 
+            'l_2_robustness':l_2_robustness, 
+            'l_inf_robustness':l_inf_robustness,
+            'epoch': epoch+1,
+            'train_loss':avg_epoch_loss, 
+            'train_accuracy':avg_epoch_accuracy,
+            'validation_loss':loss,
+            'validation_accuracy':accuracy,
+            'duration':total_time,
+            'criterion':criterion,
+            'optimizer':optimizer,
+            'method': 'standard',
+            'batchsize': len(next(iter(train_loader))[1])
+        }
+        model.train_stats = model.train_stats.append(data, ignore_index=True)
+        
+        if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
+            epochs_trained = i + 1
+            print('stopped early after', patience, 'epochs without decrease of validation loss')
             break
     print('Finished Training')
-    return {
-        'criterion': criterion,
-        'optimizer': optimizer,
-        'hist': {
-            'train_loss': train_loss_hist,
-            'train_accuracy': train_acc_hist,
-            'validation_loss': val_loss_hist,
-            'validation_accuracy': val_acc_hist
-        },
-        'val_accuracy': accuracy
-    }
+    
+    return model.train_stats
 
-def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replays=3, eps = 16/255):
+def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replays=3, eps = 16/255, patience=None):
     mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
     mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
     std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = optim.Adam(model.parameters())
-    
+    epochs_trained = 0
+    total_time = 0
     pert_storage = torch.zeros((512,3,32,32)).to(device)
     train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
     for epoch in range(epochs):  # loop over the dataset multiple times
@@ -190,15 +204,21 @@ def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replay
         avg_epoch_accuracy = acc_epoch_accuracy / (i+1)*number_of_replays    
         avg_epoch_loss = acc_epoch_loss / (i+1)*number_of_replays
         t1 = time.time()
+        total_time += t1 - t0
         accuracy, loss = _evaluate_model(model, val_loader, device, criterion)
         print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.2f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
         train_loss_hist.append(avg_epoch_loss)
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        
+        if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
+            print('stopped early after', patience, 'epochs without decrease of validation loss')
+            epochs_trained = i + 1
+            break
     print('Finished Training')
     return {
+        'epochs_trained':epochs_trained,
+        'avg_time_per_epoch': total_time/epochs,
         'criterion': criterion,
         'optimizer': optimizer,
         'hist': {
@@ -210,81 +230,103 @@ def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replay
         'val_accuracy': accuracy
     }
 
-def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255):
+def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None):
+    mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
+    std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
+    
+    optimizer = optim.Adam(model.parameters())
+    criterion = nn.CrossEntropyLoss().to(device)
+    
+    epochs_trained = 0
+    total_time = 0
+    train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
+    for epoch in range(epochs):
+        t0 = time.time()
+        running_loss, acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0, 0.0
+        
+        for i, data in enumerate(train_loader):
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+            pert = torch.rand_like(inputs, requires_grad=True)
+            adv_inputs = inputs + pert
+            adv_inputs.clamp_(0, 1.0)
+            adv_inputs.sub_(mean).div_(std)
+            #clip 0,1
+            
+            # first backwards pass to perform fgsm
+            outputs = model(adv_inputs)
+            loss = criterion(outputs, labels)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            pert = pert + (eps * pert.grad)
+            pert.clamp_(-eps, eps)
+            adv_inputs = inputs + pert
+            
+            # second backwards pass to update weights on adv.
+            optimizer.zero_grad()
+            outputs = model(adv_inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            accuracy = get_accuracy(labels, outputs)
+            acc_epoch_loss += loss.item() 
+            avg_epoch_loss = acc_epoch_loss / (i+1)
+            acc_epoch_accuracy += accuracy
+            avg_epoch_accuracy = acc_epoch_accuracy / (i+1)
+            if i%10 == 0:
+                print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
+
+        t1 = time.time()
+        total_time += t1 - t0
+        accuracy, loss = _evaluate_model(model, val_loader, device, criterion)
+
+        print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.5f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
+        train_loss_hist.append(avg_epoch_loss)
+        train_acc_hist.append(avg_epoch_accuracy)
+        val_loss_hist.append(loss)
+        val_acc_hist.append(accuracy)
+        
+        if epoch%3==0:
+            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
+        data = {
+            'l_0_robustness':l_0_robustness, 
+            'l_2_robustness':l_2_robustness, 
+            'l_inf_robustness':l_inf_robustness,
+            'epoch': epoch+1,
+            'train_loss':avg_epoch_loss, 
+            'train_accuracy':avg_epoch_accuracy,
+            'validation_loss':loss,
+            'validation_accuracy':accuracy,
+            'duration':total_time,
+            'criterion':criterion,
+            'optimizer':optimizer,
+            'method': 'standard',
+            'batchsize': len(next(iter(train_loader))[1])
+        }
+        model.train_stats = model.train_stats.append(data, ignore_index=True)
+        
+        
+        if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
+            print('stopped early after', patience, 'epochs without decrease of validation loss')
+            epochs_trained = i + 1
+            break
+    print('Finished Training')
+    return model.train_stats
+
+        
+def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None):
     mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
     mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
     std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
 
     optimizer = optim.Adam(model.parameters())
     criterion = nn.CrossEntropyLoss().to(device)
-    train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
-    for epoch in range(epochs):
-        t0 = time.time()
-        running_loss, acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0, 0.0
-        
-        for i, data in enumerate(train_loader):
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
-            pert = torch.rand_like(inputs, requires_grad=True)
-            adv_inputs = inputs + pert
-            adv_inputs.clamp_(0, 1.0)
-            adv_inputs.sub_(mean).div_(std)
-            #clip 0,1
-            
-            # first backwards pass to perform fgsm
-            outputs = model(adv_inputs)
-            loss = criterion(outputs, labels)
-            
-            optimizer.zero_grad()
-            loss.backward()
-            pert = pert + (eps * pert.grad)
-            pert.clamp_(-eps, eps)
-            adv_inputs = inputs + pert
-            
-            # second backwards pass to update weights on adv.
-            optimizer.zero_grad()
-            outputs = model(adv_inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            
-            accuracy = get_accuracy(labels, outputs)
-            acc_epoch_loss += loss.item() 
-            avg_epoch_loss = acc_epoch_loss / (i+1)
-            acc_epoch_accuracy += accuracy
-            avg_epoch_accuracy = acc_epoch_accuracy / (i+1)
-            if i%10 == 0:
-                print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
-
-        t1 = time.time()
-        accuracy, loss = _evaluate_model(model, val_loader, device, criterion)
-
-        print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.5f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
-        train_loss_hist.append(avg_epoch_loss)
-        train_acc_hist.append(avg_epoch_accuracy)
-        val_loss_hist.append(loss)
-        val_acc_hist.append(accuracy)
-    print('Finished Training')
-    return {
-        'criterion': criterion,
-        'optimizer': optimizer,
-        'hist': {
-            'train_loss': train_loss_hist,
-            'train_accuracy': train_acc_hist,
-            'validation_loss': val_loss_hist,
-            'validation_accuracy': val_acc_hist
-        },
-        'val_accuracy': accuracy
-    }
-
-        
-def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, device, eps = 8/255):
-    mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
-    mean = torch.tensor(mean).view(3,1,1).expand(3,32,32)
-    std = torch.tensor(std).view(3,1,1).expand(3,32,32)
-
-    optimizer = optim.Adam(model.parameters())
-    criterion = nn.CrossEntropyLoss().to(device)
+    
+    epochs_trained = 0
+    total_time = 0
     train_loss_hist, train_acc_hist, val_loss_hist, val_acc_hist = [], [], [], []
     for epoch in range(epochs):
         t0 = time.time()
@@ -326,6 +368,7 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
                 print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
 
         t1 = time.time()
+        total_time += t1 - t0
         accuracy, loss = _evaluate_model(model, val_loader, device, criterion)
 
         print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.5f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
@@ -333,21 +376,66 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
+        if epoch%3==0:
+            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
+        data = {
+            'l_0_robustness':l_0_robustness, 
+            'l_2_robustness':l_2_robustness, 
+            'l_inf_robustness':l_inf_robustness,
+            'epoch': epoch+1,
+            'train_loss':avg_epoch_loss, 
+            'train_accuracy':avg_epoch_accuracy,
+            'validation_loss':loss,
+            'validation_accuracy':accuracy,
+            'duration':total_time,
+            'criterion':criterion,
+            'optimizer':optimizer,
+            'method': 'standard',
+            'batchsize': len(next(iter(train_loader))[1])
+        }
+        model.train_stats = model.train_stats.append(data, ignore_index=True)
+        
+        if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
+            epochs_trained = i + 1
+            print('stopped early after', patience, 'epochs without decrease of validation loss')
+            break
     print('Finished Training')
-    return {
-        'criterion': criterion,
-        'optimizer': optimizer,
-        'hist': {
-            'train_loss': train_loss_hist,
-            'train_accuracy': train_acc_hist,
-            'validation_loss': val_loss_hist,
-            'validation_accuracy': val_acc_hist
-        },
-        'val_accuracy': accuracy
-    }
+    return model.train_stats
 
 
 ### Helpers
+def _evaluate_robustness(model, test_data, device):
+    def bb_attack(model, images, labels, eps=8/255):
+        model.eval()
+        fmodel = PyTorchModel(model, bounds=(0, 1))
+        attack = L0BrendelBethgeAttack()
+        raw_advs, clipped_advs, success = attack(fmodel, images, labels, epsilons=eps)
+        model.train()
+        return (1 - torch.sum(success)/len(success)) / 100
+
+    def cw_attack(model, images, labels, eps=2):
+        model.eval()
+        fmodel = PyTorchModel(model, bounds=(0, 1))
+        attack = L2CarliniWagnerAttack()
+        raw_advs, clipped_advs, success = attack(fmodel, images, labels, epsilons=eps)
+        model.train()
+
+        return (1 - torch.sum(success)/len(success))
+
+    def pgd_attack(model, images, labels, eps=8/255):
+        model.eval()
+        fmodel = PyTorchModel(model, bounds=(0, 1))
+        attack = LinfPGD()
+        raw_advs, clipped_advs, success = attack(fmodel, images, labels, epsilons=eps)
+        model.train()
+        return (1 - torch.sum(success)/len(success))
+    
+    images, labels = next(iter(test_data))
+    images, labels = images.to(device), labels.to(device)
+    l_0_robustness = 0
+    l_2_robustness = cw_attack(model, images, labels)
+    l_inf_robustness = pgd_attack(model, images, labels)
+    return (l_0_robustness, 'n/a'),(l_2_robustness, 'n/a'),(l_inf_robustness, 'n/a')
 
 def get_accuracy(labels, outputs):
     _, predicted = torch.max(outputs.data, 1)
@@ -359,7 +447,5 @@ def get_accuracy(labels, outputs):
 def fgsm(gradients, step_size=.05):
     return step_size*torch.sign(gradients)
 
-def check_early_stopping(val_loss_hist, epoch, patience):
-    filter(lambda x: val_loss_hist[-1:] > x, val_loss_hist[patience:])
-    print(val_loss_hist)
-    return False
+def stop_early(val_loss_hist, patience):
+    return len(list(filter(lambda x: val_loss_hist[-patience-1] > x, val_loss_hist[-(patience):]))) == 0 # Check if any value in the last x-1 epochs is higher then the value of the epoch t-x 

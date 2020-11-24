@@ -38,17 +38,22 @@ def load_imagenette():
                                               shuffle=True)
     return train_loader, val_loader
 
-def load_torchvision_dataset(dataset, batchsize=512):
-    train_transforms = torchvision.transforms.Compose([
-        torchvision.transforms.ColorJitter(hue=.05, saturation=.05),
-        torchvision.transforms.RandomHorizontalFlip(),
-        torchvision.transforms.RandomRotation(20),
-        torchvision.transforms.Resize(40),
-        torchvision.transforms.RandomResizedCrop(32),
-        torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
-    ])
-    
+def load_torchvision_dataset(dataset, batchsize=512, data_augmentation=False):
+    if data_augmentation == True:
+        train_transforms = torchvision.transforms.Compose([
+            #torchvision.transforms.ColorJitter(hue=.05, saturation=.05),
+            torchvision.transforms.RandomHorizontalFlip(),
+            torchvision.transforms.RandomRotation(20),
+            torchvision.transforms.Resize(40),
+            torchvision.transforms.RandomResizedCrop(32),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
+        ])
+    if data_augmentation == False:
+        train_transforms = torchvision.transforms.Compose([
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
+        ])
     val_transforms = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
