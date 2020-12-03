@@ -75,6 +75,6 @@ def load_torchvision_dataset(dataset, batchsize=512, data_augmentation=False):
     test_loader = torch.utils.data.DataLoader(
         test,
         batch_size=batchsize,
-        shuffle=True,
+        shuffle=False,
     )
     return train_loader, test_loader

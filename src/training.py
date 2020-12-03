@@ -231,7 +231,9 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
     #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
     #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
     if model.optim == None:
-        optimizer = optim.Adam(model.parameters())
+        optimizer = optim.Adam(model.parameters(), lr=5e-4)
+        #optimizer = optim.SGD(model.parameters(), lr=5e-4)
+        
     else:
         optimizer = model.optim
     criterion = nn.CrossEntropyLoss().to(device)
@@ -247,10 +249,19 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
             if i==i:
                 inputs, labels = data
                 inputs, labels = inputs.to(device), labels.to(device)
+                #pert = torch.zeros_like(inputs).uniform_(-eps, eps)
+                #pert.requires_grad = True
+                #adv_inputs = inputs + pert
+                #adv_inputs.clamp_(0, 1.0)
+
+                
+                
                 pert = torch.zeros_like(inputs).uniform_(-eps, eps)
                 pert.requires_grad = True
+                pert = (inputs+pert).clamp_(0, 1.0) - inputs
                 adv_inputs = inputs + pert
-                adv_inputs.clamp_(0, 1.0)
+                
+                
                 #adv_inputs.sub_(mean).div_(std)
                 #clip 0,1
 
@@ -262,9 +273,8 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
                 loss.backward()
                 alpha = 1.25*eps
                 pert = pert + (alpha * torch.sign(pert.grad))
-                pert.clamp_(-eps, eps)
+                pert = (inputs + pert).clamp_(0,1)-inputs
                 adv_inputs = inputs + pert
-                adv_inputs.clamp_(0, 1.0)
 
                 # second backwards pass to update weights on adv.
                 optimizer.zero_grad()
