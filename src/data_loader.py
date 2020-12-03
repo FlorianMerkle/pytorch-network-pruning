@@ -41,22 +41,24 @@ def load_imagenette():
 def load_torchvision_dataset(dataset, batchsize=512, data_augmentation=False):
     if data_augmentation == True:
         train_transforms = torchvision.transforms.Compose([
+            torchvision.transforms.RandomCrop(32, padding=4),
+            torchvision.transforms.RandomHorizontalFlip(),
             #torchvision.transforms.ColorJitter(hue=.05, saturation=.05),
             torchvision.transforms.RandomHorizontalFlip(),
-            torchvision.transforms.RandomRotation(20),
-            torchvision.transforms.Resize(40),
-            torchvision.transforms.RandomResizedCrop(32),
+            #torchvision.transforms.RandomRotation(20),
+            #torchvision.transforms.Resize(40),
+            #torchvision.transforms.RandomResizedCrop(32),
             torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
+            #torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
         ])
     if data_augmentation == False:
         train_transforms = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
+            #torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),        
         ])
     val_transforms = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        #torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
     
     if dataset == 'MNIST':

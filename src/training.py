@@ -55,18 +55,11 @@ def _fit_adv(model, train_data, test_data, epochs, device, attack, epsilon, pati
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
     print('Finished Training')
-    model.train_stats['train_loss_history'] += train_loss_hist
-    model.train_stats['train_accuracy_history'] += train_acc_hist
-    model.train_stats['validation_loss_history'] += val_loss_hist
-    model.train_stats['validation_accuracy_history'] += val_acc_hist
-    model.train_stats['epochs_trained'] += epochs
-    model.train_stats['total_training_time'] += total_time
-    model.train_stats['criterion'].append(criterion) 
-    model.train_stats['optimizer'].append(optimizer)
+
 
     return model.train_stats
 
-def _fit(model, train_loader, val_loader, epochs, device, patience=None):
+def _fit(model, train_loader, val_loader, epochs, device, patience=None, evaluate_robustness=False):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters())
 
@@ -112,12 +105,7 @@ def _fit(model, train_loader, val_loader, epochs, device, patience=None):
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        if epoch%3==0:
-            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
         data = {
-            'l_0_robustness':l_0_robustness, 
-            'l_2_robustness':l_2_robustness, 
-            'l_inf_robustness':l_inf_robustness,
             'epoch': epoch+1,
             'train_loss':avg_epoch_loss, 
             'train_accuracy':avg_epoch_accuracy,
@@ -129,6 +117,14 @@ def _fit(model, train_loader, val_loader, epochs, device, patience=None):
             'method': 'standard',
             'batchsize': len(next(iter(train_loader))[1])
         }
+        
+        
+        if epoch%3==0 and evaluate_robustness == True:
+            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
+            date['l_0_robustness'] = l_0_robustness
+            date['l_2_robustness'] = l_2_robustness
+            date['l_inf_robustness'] = l_inf_robustness
+        
         model.train_stats = model.train_stats.append(data, ignore_index=True)
         
         if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
@@ -139,10 +135,10 @@ def _fit(model, train_loader, val_loader, epochs, device, patience=None):
     
     return model.train_stats
 
-def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replays=3, eps = 16/255, patience=None):
-    mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
-    mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
-    std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
+def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replays=3, eps = 16/255, patience=None, evaluate_robustness=False):
+    #mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
+    #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
     criterion = nn.CrossEntropyLoss().to(device)
     optimizer = optim.Adam(model.parameters())
     epochs_trained = 0
@@ -168,7 +164,7 @@ def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replay
                 adv_input = inputs+noise_batch[:no_of_samples_in_batch]
                 
                 adv_input.clamp_(0, 1.0)
-                adv_input.sub_(mean).div_(std)
+                #adv_input.sub_(mean).div_(std)
                 
                 #print(adv_input[0])
 
@@ -230,12 +226,14 @@ def _fit_free(model, train_loader, val_loader , epochs, device, number_of_replay
         'val_accuracy': accuracy
     }
 
-def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None):
-    mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
-    mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
-    std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
-    
-    optimizer = optim.Adam(model.parameters())
+def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None, evaluate_robustness=False):
+    #mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
+    #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
+    if model.optim == None:
+        optimizer = optim.Adam(model.parameters())
+    else:
+        optimizer = model.optim
     criterion = nn.CrossEntropyLoss().to(device)
     
     epochs_trained = 0
@@ -246,38 +244,48 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
         running_loss, acc_epoch_loss, avg_epoch_loss, epoch_accuracy, acc_epoch_accuracy = 0.0, 0.0, 0.0, 0.0, 0.0
         
         for i, data in enumerate(train_loader):
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
-            pert = torch.rand_like(inputs, requires_grad=True)
-            adv_inputs = inputs + pert
-            adv_inputs.clamp_(0, 1.0)
-            adv_inputs.sub_(mean).div_(std)
-            #clip 0,1
-            
-            # first backwards pass to perform fgsm
-            outputs = model(adv_inputs)
-            loss = criterion(outputs, labels)
-            
-            optimizer.zero_grad()
-            loss.backward()
-            pert = pert + (eps * pert.grad)
-            pert.clamp_(-eps, eps)
-            adv_inputs = inputs + pert
-            
-            # second backwards pass to update weights on adv.
-            optimizer.zero_grad()
-            outputs = model(adv_inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            
-            accuracy = get_accuracy(labels, outputs)
-            acc_epoch_loss += loss.item() 
-            avg_epoch_loss = acc_epoch_loss / (i+1)
-            acc_epoch_accuracy += accuracy
-            avg_epoch_accuracy = acc_epoch_accuracy / (i+1)
-            if i%10 == 0:
-                print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
+            if i==i:
+                inputs, labels = data
+                inputs, labels = inputs.to(device), labels.to(device)
+                pert = torch.zeros_like(inputs).uniform_(-eps, eps)
+                pert.requires_grad = True
+                adv_inputs = inputs + pert
+                adv_inputs.clamp_(0, 1.0)
+                #adv_inputs.sub_(mean).div_(std)
+                #clip 0,1
+
+                # first backwards pass to perform fgsm
+                outputs = model(adv_inputs)
+                loss = criterion(outputs, labels)
+
+                optimizer.zero_grad()
+                loss.backward()
+                alpha = 1.25*eps
+                pert = pert + (alpha * torch.sign(pert.grad))
+                pert.clamp_(-eps, eps)
+                adv_inputs = inputs + pert
+                adv_inputs.clamp_(0, 1.0)
+
+                # second backwards pass to update weights on adv.
+                optimizer.zero_grad()
+                outputs = model(adv_inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+
+                clean_outputs = model(inputs)
+                clean_train_accuracy = get_accuracy(labels, clean_outputs)
+                adv_train_accuracy = get_accuracy(labels, outputs)
+                acc_epoch_loss += loss.item() 
+                avg_epoch_loss = acc_epoch_loss / (i+1)
+                acc_epoch_accuracy += adv_train_accuracy
+                avg_epoch_accuracy = acc_epoch_accuracy / (i+1)
+                if i%5 == 0:
+                    print('[%d, %5d] loss: %.5f, adv_train_accuracy: %.2f, clean_train_accuracy : %.2f' %(epoch + 1, i + 1, loss.item(), adv_train_accuracy, clean_train_accuracy))
+        f_adv, f_success = FGSM(model, val_loader, torch.nn.CrossEntropyLoss(), 8/255, device)
+        print('fgsm robustness:',1-f_success)
+        p_adv, p_success = PGD(model, val_loader, torch.nn.CrossEntropyLoss(), device)
+        print('pgd robustness:', 1-p_success)
 
         t1 = time.time()
         total_time += t1 - t0
@@ -288,13 +296,7 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        
-        if epoch%3==0:
-            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
         data = {
-            'l_0_robustness':l_0_robustness, 
-            'l_2_robustness':l_2_robustness, 
-            'l_inf_robustness':l_inf_robustness,
             'epoch': epoch+1,
             'train_loss':avg_epoch_loss, 
             'train_accuracy':avg_epoch_accuracy,
@@ -304,23 +306,29 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
             'criterion':criterion,
             'optimizer':optimizer,
             'method': 'standard',
-            'batchsize': len(next(iter(train_loader))[1])
+            'batchsize': len(next(iter(train_loader))[1]),
+            'fgsm': 1-f_success,
+            'pgd_robustness': 1-p_success,
         }
+        del f_adv
+        del f_success
+        del p_adv
+        del p_success
         model.train_stats = model.train_stats.append(data, ignore_index=True)
-        
         
         if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
             print('stopped early after', patience, 'epochs without decrease of validation loss')
             epochs_trained = i + 1
             break
+    model.optim = optimizer
     print('Finished Training')
     return model.train_stats
 
         
-def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None):
-    mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
-    mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
-    std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
+def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, device, eps = 8/255, patience=None, evaluate_robustness=False):
+    #mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
+    #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
 
     optimizer = optim.Adam(model.parameters())
     criterion = nn.CrossEntropyLoss().to(device)
@@ -338,7 +346,7 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
             pert = torch.rand_like(inputs, requires_grad=True)
             adv_inputs = inputs + pert
             adv_inputs.clamp_(0, 1.0)
-            adv_inputs.sub_(mean).div_(std)
+            #adv_inputs.sub_(mean).div_(std)
             #clip 0,1
             
             # first backwards pass to perform fgsm
@@ -347,9 +355,11 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
             
             optimizer.zero_grad()
             loss.backward()
-            pert = pert + (eps * pert.grad)
+            alpha = 1.25 * eps
+            pert = pert + (alpha * torch.sign(pert.grad))
             pert.clamp_(-eps, eps)
             adv_inputs = inputs + pert
+            adv_inputs.clamp_(0, 1.0)
             optimizer.step()
             
             # second backwards pass to update weights on adv.
@@ -376,12 +386,7 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
         train_acc_hist.append(avg_epoch_accuracy)
         val_loss_hist.append(loss)
         val_acc_hist.append(accuracy)
-        if epoch%3==0:
-            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
         data = {
-            'l_0_robustness':l_0_robustness, 
-            'l_2_robustness':l_2_robustness, 
-            'l_inf_robustness':l_inf_robustness,
             'epoch': epoch+1,
             'train_loss':avg_epoch_loss, 
             'train_accuracy':avg_epoch_accuracy,
@@ -393,6 +398,13 @@ def _fit_fast_with_double_update(model, train_loader, val_loader , epochs, devic
             'method': 'standard',
             'batchsize': len(next(iter(train_loader))[1])
         }
+        
+        
+        if epoch%3==0 and evaluate_robustness == True:
+            (l_0_robustness, l_0_loss), (l_2_robustness, l_2_loss), (l_inf_robustness, l_inf_loss) = _evaluate_robustness(model, val_loader, device)
+            date['l_0_robustness'] = l_0_robustness
+            date['l_2_robustness'] = l_2_robustness
+            date['l_inf_robustness'] = l_inf_robustness
         model.train_stats = model.train_stats.append(data, ignore_index=True)
         
         if patience != None and patience < epoch and stop_early(val_loss_hist, patience) == True:
@@ -449,3 +461,73 @@ def fgsm(gradients, step_size=.05):
 
 def stop_early(val_loss_hist, patience):
     return len(list(filter(lambda x: val_loss_hist[-patience-1] > x, val_loss_hist[-(patience):]))) == 0 # Check if any value in the last x-1 epochs is higher then the value of the epoch t-x 
+
+
+def PGD(model, data_loader, criterion, device, max_stepsize=1.25*8/255, eps=8/255, steps=7):
+    model.eval()
+    advs = []
+    correct = 0
+    total = 0
+    for i, data in enumerate(data_loader):
+        if i < 8:
+            inputs, labels = data
+            inputs, labels =inputs.to(device), labels.to(device)
+
+            adv_examples = inputs
+            adv_examples.requires_grad = True
+            adv_examples.retain_grad()
+            for step in range(steps):
+                #print(torch.max(adv_examples[0]-inputs[0][0]))
+                adv_examples, pert = FGSM_step(model, adv_examples, labels, criterion, max_stepsize, device)
+                pert = adv_examples - inputs
+                pert.clamp_(-eps, eps)
+                adv_examples = inputs + pert
+                adv_examples.clamp_(0,1)
+            advs.append(adv_examples)
+            preds = model(adv_examples)
+            #pred_labels = 
+            _, predicted = torch.max(preds.data, 1)
+            total += len(predicted)
+            #correct += (pred_labels == labels).sum().item()
+            correct += (predicted != labels).sum().item()
+    return advs, correct/total
+        
+
+def FGSM_step(model, inputs, labels, criterion, eps, device):
+
+    inputs.retain_grad()
+    perturbation = torch.zeros_like(inputs).to(device)
+    preds = model(inputs)
+    loss = criterion(preds, labels)
+    loss.backward(retain_graph=True)
+    perturbation = torch.sign(inputs.grad).clamp_(-eps, eps)
+    adv_examples = inputs + perturbation
+    adv_examples.clamp_(0,1)
+    return adv_examples, perturbation
+    
+
+def FGSM(model, data_loader, criterion, eps, device):
+    model.eval()
+    #mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+    #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
+    #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
+    advs = []
+    correct = 0
+    total = 0
+    for i,data in enumerate(data_loader):
+        if i < 8:
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
+            inputs.requires_grad = True
+            adv_examples, perturbation = FGSM_step(model, inputs, labels, criterion, eps, device)
+
+            advs.append(adv_examples)
+            preds = model(adv_examples)
+            #pred_labels = 
+            _, predicted = torch.max(preds.data, 1)
+            total += len(predicted)
+            #correct += (pred_labels == labels).sum().item()
+            correct += (predicted != labels).sum().item()
+
+    
+    return advs, correct/total

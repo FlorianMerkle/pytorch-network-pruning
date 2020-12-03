@@ -25,6 +25,7 @@ class CifarResNet(nn.Module):
         self.conv_weights, self.conv_masks, self.fully_connected_weights, self.fully_connected_masks = None, None, None, None
         self.identify_layers()
         self.train_stats = pd.DataFrame(columns=('epoch', 'train_loss', 'train_accuracy', 'validation_loss','l_inf_robustness','l_inf_loss' ,'l_2_robustness','l_2_loss','l_0_robustness','l_0_loss', 'validation_accuracy', 'duration', 'criterion', 'optimizer', 'method', 'learning_rate', 'batchsize'))
+        self.optim = None
     
     def forward(self, inputs):
         x = self.c1(inputs)
@@ -41,20 +42,21 @@ class CifarResNet(nn.Module):
         x = self.d1(x)
         return (x)
     
-    def fit(self, train_data, val_data, epochs, device, eps = 8/255, number_of_replays=7, patience=None):
-        return _fit(self, train_data, val_data, epochs, device, patience=patience)
+    def fit(self, train_data, val_data, epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
+        return _fit(self, train_data, val_data, epochs, device, patience=patience, evaluate_robustness=evaluate_robustness)
     
-    def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD', eps = 8/255, number_of_replays=7, patience=None):
-        return _fit_adv(self, train_data, test_data, epochs, device, attack, epsilon, patience=patience)
+    def fit_adv(self, train_data, test_data, epochs, device, epsilon, attack='PGD', eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
+        return _fit_adv(self, train_data, test_data, epochs, device, attack, epsilon, patience=patience, evaluate_robustness=evaluate_robustness)
     
-    def fit_free(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None):
-        return _fit_free(self, train_loader, val_loader , epochs, device, number_of_replays, eps, patience=patience)
+    def fit_free(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
+        return _fit_free(self, train_loader, val_loader , epochs, device, number_of_replays, eps, patience=patience, evaluate_robustness=evaluate_robustness)
     
-    def fit_fast(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None):
-        return _fit_fast(self, train_loader, val_loader , epochs, device, eps, patience=patience)
+    def fit_fast(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
+        print('fast adversarial training')
+        return _fit_fast(self, train_loader, val_loader , epochs, device, eps, patience=patience, evaluate_robustness=evaluate_robustness)
     
-    def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None):
-        return _fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps, patience=patience)
+    def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
+        return _fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps, patience=patience, evaluate_robustness=evaluate_robustness)
     
     def identify_layers(self):
         print('identifying layers')

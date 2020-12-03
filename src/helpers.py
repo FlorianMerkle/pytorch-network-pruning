@@ -9,10 +9,10 @@ from foolbox.attacks import LinfPGD, FGSM
 import time
 
 
-def _craft_advs(model, images, labels, epsilon, attack):    
+def _craft_advs(model, images, labels, epsilon, attack, device):    
     #preprocessing = dict(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225], axis=-3)
     model.eval()
-    fmodel = PyTorchModel(model, bounds=(0, 1))
+    fmodel = PyTorchModel(model, bounds=(0, 1), device=device)
     # apply the attack
     if attack == 'FGSM':
         attack = FGSM()
@@ -30,6 +30,7 @@ def _evaluate_model(model, data_loader, device, criterion):
     total = 0
     acc_loss = 0.0
     avg_loss = 0.0
+    model.eval()
     with torch.no_grad():
         for i, data in enumerate(data_loader):
             #print(i)
@@ -46,6 +47,7 @@ def _evaluate_model(model, data_loader, device, criterion):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     accuracy = 100 * correct / total
+    model.train()
     return accuracy, avg_loss
 
 def evaluate_clean_accuracy(model, data_loader, device, criterion=None):
@@ -55,10 +57,9 @@ def evaluate_rob_accuracy(model, data_loader, device, epsilon, attack):
     correct = 0
     total = 0
     for i, data in enumerate(data_loader):
-        
         images, labels = data
         images, labels = images.to(device), labels.to(device)
-        adv_images = _craft_advs(model, images, labels, epsilon, attack)
+        adv_images = _craft_advs(model, images, labels, epsilon, attack, device)
         adv_images, labels = adv_images.to(device), labels.to(device)
         with torch.no_grad():
             outputs = model(adv_images)
@@ -119,6 +120,9 @@ def load_model(model, PATH, optim='ADAM'):
     checkpoint = torch.load(PATH)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    model.train_stats = checkpoint['train_stats']
+    try:
+        model.train_stats = checkpoint['train_stats']
+    except:
+        pass
     model.train()
     return model
