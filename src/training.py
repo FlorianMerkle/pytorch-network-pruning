@@ -231,8 +231,8 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
     #mean = torch.tensor(mean).view(3,1,1).expand(3,32,32).to(device)
     #std = torch.tensor(std).view(3,1,1).expand(3,32,32).to(device)
     if model.optim == None:
-        optimizer = optim.Adam(model.parameters(), lr=5e-4)
-        #optimizer = optim.SGD(model.parameters(), lr=5e-4)
+        #optimizer = optim.Adam(model.parameters(), lr=5e-4)
+        optimizer = optim.SGD(model.parameters(), lr=1e-2)
         
     else:
         optimizer = model.optim
@@ -257,20 +257,23 @@ def _fit_fast(model, train_loader, val_loader , epochs, device, eps = 8/255, pat
                 
                 
                 pert = torch.zeros_like(inputs).uniform_(-eps, eps)
+                
                 pert.requires_grad = True
+                pert.retain_grad()
                 pert = (inputs+pert).clamp_(0, 1.0) - inputs
                 adv_inputs = inputs + pert
                 
-                
+                pert.retain_grad()
                 #adv_inputs.sub_(mean).div_(std)
                 #clip 0,1
 
                 # first backwards pass to perform fgsm
                 outputs = model(adv_inputs)
                 loss = criterion(outputs, labels)
-
+                
                 optimizer.zero_grad()
-                loss.backward()
+                loss.backward(retain_graph=True)
+                pert.retain_grad()
                 alpha = 1.25*eps
                 pert = pert + (alpha * torch.sign(pert.grad))
                 pert = (inputs + pert).clamp_(0,1)-inputs
