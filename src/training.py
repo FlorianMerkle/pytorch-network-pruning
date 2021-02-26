@@ -3,8 +3,326 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from foolbox import PyTorchModel, accuracy, samples
 from foolbox.attacks import LinfPGD, FGSM, L0BrendelBethgeAttack, L2CarliniWagnerAttack
+import copy
+
+def clamp(X, lower_limit, upper_limit):
+    #print(upper_limit.shape)
+    return torch.max(torch.min(X, upper_limit), lower_limit)
+
+
+def evaluate_pgd(test_loader, model, attack_iters, restarts):
+    epsilon = (8 / 255.) / std
+    alpha = (2 / 255.) / std
+    pgd_loss = 0
+    pgd_acc = 0
+    n = 0
+    model.eval()
+    for i, (X, y) in enumerate(test_loader):
+        if i < 2:
+            X, y = X.cuda(), y.cuda()
+            pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
+            with torch.no_grad():
+                output = model(X + pgd_delta)
+                loss = F.cross_entropy(output, y)
+                pgd_loss += loss.item() * y.size(0)
+                pgd_acc += (output.max(1)[1] == y).sum().item()
+                n += y.size(0)
+    model.train()
+    return pgd_loss/n, pgd_acc/n
+
+
+def evaluate_standard(test_loader, model):
+    test_loss = 0
+    test_acc = 0
+    n = 0
+    model.eval()
+    with torch.no_grad():
+        for i, (X, y) in enumerate(test_loader):
+            X, y = X.cuda(), y.cuda()
+            output = model(X)
+            loss = F.cross_entropy(output, y)
+            test_loss += loss.item() * y.size(0)
+            test_acc += (output.max(1)[1] == y).sum().item()
+            n += y.size(0)
+    return test_loss/n, test_acc/n
+
+std = torch.tensor((1,1,1)).view(3,1,1).cuda()
+std = torch.tensor((1,1,1)).view(3,1,1).cuda()
+#epsilon = eps/255 / std
+#alpha = alpha/255 / std
+pgd_alpha = (2 / 255.) / std
+lr_min = 0.
+lr_max = 0.2
+momentum = .9
+weight_decay = 5e-4
+lower_limit = 0
+upper_limit = 1
+
+
+def _fit_fast_new(model, train_loader, test_loader, device, pruning_ratio=0, pruning_steps=1, epochs = 20, epsilon = 8, alpha = 10, pgd_alpha = 2, lr_min = 0.,lr_max = 0.2, momentum = .9, weight_decay = 5e-4):
+    std = torch.tensor((1,1,1)).view(3,1,1).cuda()
+    pgd_alpha = (pgd_alpha / 255.) / std
+    lower_limit = torch.tensor((0,0,0)).view(3,1,1).cuda()
+    upper_limit = torch.tensor((1,1,1)).view(3,1,1).cuda()
+    epsilon = (epsilon / 255.) / std
+    alpha = (alpha / 255.) / std
+    pgd_alpha = (2 / 255.) / std
+
+
+    model.train()
+
+    opt = torch.optim.SGD(model.parameters(), lr=lr_max, momentum=momentum, weight_decay=weight_decay)
+    #amp_args = dict(opt_level=args.opt_level, loss_scale=args.loss_scale, verbosity=False)
+    #if args.opt_level == 'O2':
+    #    amp_args['master_weights'] = args.master_weights
+    #model, opt = amp.initialize(model, opt, **amp_args)
+    criterion = nn.CrossEntropyLoss()
+
+
+    lr_steps = epochs * len(train_loader)
+    scheduler = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=lr_min, max_lr=lr_max, step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
+    
+    pruning_intervals = round(epochs/(pruning_steps + 1))
+    print(pruning_intervals)
+    pruning_schedule = [ epoch % pruning_intervals == 0 and epoch / pruning_intervals != 0 for epoch in list(range(epochs))]
+    print(pruning_schedule)
+    pruning_step = 1
+    # Training
+    prev_robust_acc = 0.
+    start_train_time = time.time()
+    #logger.info('Epoch \t Seconds \t LR \t \t Train Loss \t Train Acc')
+    for epoch in range(epochs):
+        if pruning_schedule[epoch] == True:
+            pruning_step_ratio = pruning_ratio/pruning_steps*pruning_step
+            print(pruning_step_ratio)
+            model.prune_magnitude_global_unstruct(pruning_step_ratio, device)
+            pruning_step+=1
+            
+        print('start epoch:', epoch)
+        
+        start_epoch_time = time.time()
+        train_loss = 0
+        train_acc = 0
+        train_n = 0
+        for i, (X, y) in enumerate(train_loader):
+            X, y = X.cuda(), y.cuda()
+            if i == 0:
+                first_batch = (X, y)
+            delta = torch.zeros_like(X).cuda()
+            delta.requires_grad = True
+            output = model(X + delta[:X.size(0)])
+            loss = F.cross_entropy(output, y)
+            #with amp.scale_loss(loss, opt) as scaled_loss:
+            #    scaled_loss.backward()
+            loss.backward()
+            grad = delta.grad.detach()
+            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            #print(type(lower_limit))
+            #print(type(X))
+            delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
+            delta = delta.detach()
+            output = model(X + delta[:X.size(0)])
+            loss = criterion(output, y)
+            opt.zero_grad()
+            #with amp.scale_loss(loss, opt) as scaled_loss:
+            #    scaled_loss.backward()
+            loss.backward()
+            opt.step()
+            train_loss += loss.item() * y.size(0)
+            train_acc += (output.max(1)[1] == y).sum().item()
+            train_n += y.size(0)
+            scheduler.step()
+        
+            # Check current PGD robustness of model using random minibatch
+#        X, y = first_batch
+#        pgd_delta = attack_pgd(model, X, y, epsilon, pgd_alpha, 7, 1, opt)
+#        with torch.no_grad():
+#            output = model(clamp(X + pgd_delta[:X.size(0)], lower_limit, upper_limit))
+        robust_acc = evaluate_pgd(test_loader, model, 7, 1)[1]
+        print('robustness: ',robust_acc, )
+        if robust_acc - prev_robust_acc < -0.2:
+            break
+        if robust_acc > prev_robust_acc:
+            prev_robust_acc = robust_acc
+            best_state_dict = copy.deepcopy(model.state_dict())
+        epoch_time = time.time()
+        lr = scheduler.get_last_lr()[0]
+        #logger.info('%d \t %.1f \t \t %.4f \t %.4f \t %.4f', epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n)
+        print(epoch, epoch_time - start_epoch_time, lr, train_loss/train_n, train_acc/train_n)
+    train_time = time.time()
+    
+    #best_state_dict = model.state_dict()
+    #torch.save(best_state_dict, os.path.join(args.out_dir, 'model.pth'))
+    #logger.info('Total train time: %.4f minutes', (train_time - start_train_time)/60)
+
+    # Evaluation
+    model_test = CifarResNet().cuda()
+    model.load_state_dict(best_state_dict)
+    model.eval()
+
+    pgd_loss, pgd_acc = evaluate_pgd(test_loader, model, 30, 3)
+    test_loss, test_acc = evaluate_standard(test_loader, model)
+
+    #logger.info('Test Loss \t Test Acc \t PGD Loss \t PGD Acc')
+    #logger.info('%.4f \t \t %.4f \t %.4f \t %.4f', test_loss, test_acc, pgd_loss, pgd_acc)
+    
+    
+    return
+
+
+def _fit_fast_locuslab(model, train_loader, val_loader , epochs, device, alpha=10, eps = 8, number_of_replays=7, patience=None, evaluate_robustness=False):
+    hist = []
+    std = torch.tensor((1.,1.,1.)).view(3,1,1).cuda()
+    epsilon = eps/255. / std
+    alpha = alpha/255. / std
+    pgd_alpha = (2 / 255.) / std
+    lr_min = 0.
+    lr_max = 1e-2
+    momentum = .9
+    weight_decay = 5e-4
+    epochs = epochs
+    lower_limit = 0.
+    upper_limit = 1.
+    model.train()
+    
+    
+    opt = torch.optim.SGD(model.parameters(), lr=lr_max, momentum=momentum, weight_decay=weight_decay)    
+        
+        
+    criterion = nn.CrossEntropyLoss()
+    lr_steps = epochs * len(train_loader)
+
+    #scheduler = torch.optim.lr_scheduler.CyclicLR(opt, base_lr=lr_min, max_lr=lr_max, step_size_up=lr_steps / 2, step_size_down=lr_steps / 2)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[lr_steps /(50-x) for x in range(50)], gamma=0.1)
+
+        
+    prev_robust_acc = 0. 
+    state_dicts = []
+    
+    for epoch in range(epochs):
+        print('start epoch:', epoch)
+        start_epoch_time = time.time()       
+        train_loss = 0
+        train_acc = 0
+        train_n = 0
+        for i, (X, y) in enumerate(train_loader):
+            X, y = X.to(device), y.to(device)
+            if i == 0:
+                #print('first batch',X.shape)
+                first_batch = (X, y)
+            delta = torch.zeros_like(X).cuda()
+            #for j in range(len(epsilon)):
+            #    if i == 0:
+            #        delta[:, j, :, :].uniform_(-epsilon[j][0][0].item(), epsilon[j][0][0].item())
+            #delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+            delta.requires_grad = True
+            output = model(X + delta[:X.size(0)])
+            loss = F.cross_entropy(output, y)
+            loss.backward()
+            grad = delta.grad.detach()
+            delta.data = clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            delta.data[:X.size(0)] = clamp(delta[:X.size(0)], lower_limit - X, upper_limit - X)
+            delta = delta.detach()
+            output = model(X + delta[:X.size(0)])
+            loss = criterion(output, y)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            train_loss += loss.item() * y.size(0)
+            train_acc += (output.max(1)[1] == y).sum().item()
+            train_n += y.size(0)
+            scheduler.step()
+        X, y = first_batch
+        #print('pre pgd',X.shape)
+        pgd_delta = attack_pgd(model, X, y, epsilon, pgd_alpha, 20, 1, opt)
+        with torch.no_grad():
+            model.eval()
+            output = model(clamp(X + pgd_delta[:X.size(0)], torch.tensor((0,0,0)).view(3,1,1).cuda(), torch.tensor((1,1,1)).view(3,1,1).cuda()))
+            model.train()
+        #robust_acc = (output.max(1)[1] == y).sum().item() / y.size(0)
+        _, robust_acc = evaluate_pgd([(X,y)], model, 7,1)
+        print(robust_acc, robust_acc - prev_robust_acc, robust_acc - prev_robust_acc < -0.2)
+        hist.append(
+            {
+                'epoch':epoch+1,
+                'clean accuracy':train_acc/train_n,
+                'robust accuracy':robust_acc,
+                'state dict': copy.deepcopy(model.state_dict())
+            }
+        )
+        if robust_acc - prev_robust_acc < -0.2:
+            break
+        if robust_acc > prev_robust_acc:
+            prev_robust_acc = robust_acc
+            best_state_dict = copy.deepcopy(model.state_dict())
+        state_dicts.append(copy.deepcopy(model.state_dict()))
+        lr = scheduler.get_last_lr()[0]
+        epoch_time = time.time()
+        #print('epoch time:', start_epoch_time - epoch_time)
+        print(epoch, lr, train_loss/train_n, train_acc/train_n)
+    print('training finished')
+    
+    model.load_state_dict(best_state_dict)
+    model.eval()
+
+    #print(evaluate_pgd(val_loader, model, 30, 3)[1])
+    #print(evaluate_standard(val_loader, model)[1])
+
+    return hist
+
+def evaluate_pgd(test_loader, model, attack_iters, restarts):
+    epsilon = (8 / 255.) / std
+    alpha = (2 / 255.) / std
+    pgd_loss = 0
+    pgd_acc = 0
+    n = 0
+    model.eval()
+    for i, (X, y) in enumerate(test_loader):
+        if i == i:
+            X, y = X.cuda(), y.cuda()
+            pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
+            with torch.no_grad():
+                output = model(X + pgd_delta)
+                loss = F.cross_entropy(output, y)
+                pgd_loss += loss.item() * y.size(0)
+                pgd_acc += (output.max(1)[1] == y).sum().item()
+                n += y.size(0)
+    return pgd_loss/n, pgd_acc/n
+
+def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
+    max_loss = torch.zeros(y.shape[0]).cuda()
+    max_delta = torch.zeros_like(X).cuda()
+    for zz in range(restarts):
+        delta = torch.zeros_like(X).cuda()
+        for i in range(len(epsilon)):
+            delta[:, i, :, :].uniform_(-epsilon[i][0][0].item(), epsilon[i][0][0].item())
+        delta.data = clamp(delta, lower_limit - X, upper_limit - X)
+        delta.requires_grad = True
+        for _ in range(attack_iters):
+            output = model(X + delta)
+            index = torch.where(output.max(1)[1] == y)
+            if len(index[0]) == 0:
+                break
+            loss = F.cross_entropy(output, y)
+            if opt is not None:
+                loss.backward()
+            else:
+                loss.backward()
+            grad = delta.grad.detach()
+            d = delta[index[0], :, :, :]
+            g = grad[index[0], :, :, :]
+            d = clamp(d + alpha * torch.sign(g), -epsilon, epsilon)
+            d = clamp(d, lower_limit - X[index[0], :, :, :], upper_limit - X[index[0], :, :, :])
+            delta.data[index[0], :, :, :] = d
+            delta.grad.zero_()
+        all_loss = F.cross_entropy(model(X+delta), y, reduction='none').detach()
+        max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
+        max_loss = torch.max(max_loss, all_loss)
+    return max_delta
+
 
 def _fit_adv(model, train_data, test_data, epochs, device, attack, epsilon, patience=None):
     criterion = nn.CrossEntropyLoss()

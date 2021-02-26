@@ -92,9 +92,9 @@ def _evaluate_sparsity(model):
 def _identify_layers(model):
     conv_weights, conv_masks, fully_connected_weights, fully_connected_masks = [], [], [], []
     for key in model.state_dict().keys():
-        if key[:1] == 'c' and 'weights' in key:
+        if key[:1] == 'c' and 'weights' in key or key[:1] == 'r' and key[3] == 'c' and 'weights' in key:
             conv_weights.append(key)
-        if key[:1] == 'c' and 'mask' in key:
+        if key[:1] == 'c' and 'mask' in key or key[:1] == 'r' and key[3] == 'c' and 'mask' in key:
             conv_masks.append(key)
         if key[:2] == 'fc' and 'weights' in key:
             fully_connected_weights.append(key)

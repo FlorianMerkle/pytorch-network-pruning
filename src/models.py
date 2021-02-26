@@ -5,7 +5,7 @@ import pandas as pd
 
 from . custom_modules import MaskedLinearLayer, MaskedConvLayer, ResBlock
 from . helpers import _identify_layers, _evaluate_sparsity
-from . training import _fit, _fit_adv, _fit_free, _fit_fast, _fit_fast_with_double_update
+from . training import _fit, _fit_fast_new, _fit_adv, _fit_free, _fit_fast, _fit_fast_with_double_update, _fit_fast_locuslab
 from . pruning import _prune_random_local_unstruct, _prune_magnitude_global_unstruct, _prune_random_local_struct, _prune_random_global_struct, _prune_magnitude_local_struct, _prune_magnitude_global_struct, _prune_magnitude_local_unstruct
 
 class CifarResNet(nn.Module):
@@ -42,6 +42,9 @@ class CifarResNet(nn.Module):
         x = self.d1(x)
         return (x)
     
+    def fit_fast_new(self, train_data, val_data, device, **kwargs):
+        return _fit_fast_new(self, train_data, val_data,device, **kwargs)
+    
     def fit(self, train_data, val_data, epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
         return _fit(self, train_data, val_data, epochs, device, patience=patience, evaluate_robustness=evaluate_robustness)
     
@@ -57,6 +60,9 @@ class CifarResNet(nn.Module):
     
     def fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps = 8/255, number_of_replays=7, patience=None, evaluate_robustness=False):
         return _fit_fast_with_double_update(self, train_loader, val_loader , epochs, device, eps, patience=patience, evaluate_robustness=evaluate_robustness)
+
+    def fit_fast_locuslab(self, train_loader, val_loader , epochs, device, eps, number_of_replays=7, patience=None, evaluate_robustness=False):
+        return _fit_fast_locuslab(self, train_loader, val_loader , epochs, device, eps = eps, number_of_replays=number_of_replays, patience=patience, evaluate_robustness=evaluate_robustness)
     
     def identify_layers(self):
         print('identifying layers')

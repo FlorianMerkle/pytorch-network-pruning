@@ -44,7 +44,7 @@ def load_torchvision_dataset(dataset, batchsize=512, data_augmentation=False):
             torchvision.transforms.RandomCrop(32, padding=4),
             torchvision.transforms.RandomHorizontalFlip(),
             #torchvision.transforms.ColorJitter(hue=.05, saturation=.05),
-            torchvision.transforms.RandomHorizontalFlip(),
+            #torchvision.transforms.RandomHorizontalFlip(),
             #torchvision.transforms.RandomRotation(20),
             #torchvision.transforms.Resize(40),
             #torchvision.transforms.RandomResizedCrop(32),
@@ -70,11 +70,15 @@ def load_torchvision_dataset(dataset, batchsize=512, data_augmentation=False):
     train_loader = torch.utils.data.DataLoader(
         train,
         batch_size=batchsize,
+        pin_memory=True,
         shuffle=True,
+        num_workers=2
     )
     test_loader = torch.utils.data.DataLoader(
         test,
         batch_size=batchsize,
+        pin_memory=True,
         shuffle=False,
+        num_workers=2
     )
     return train_loader, test_loader
