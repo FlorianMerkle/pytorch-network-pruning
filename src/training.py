@@ -416,7 +416,7 @@ def _fit(model, train_loader, val_loader, epochs, device, patience=None, evaluat
                 print('[%d, %5d] loss: %.5f, train_accuracy: %.2f' %(epoch + 1, i + 1, loss.item(), accuracy))
         t1 = time.time()
         total_time += t1 - t0
-        accuracy, loss = _evaluate_model(model, test_data, device, criterion)
+        accuracy, loss = _evaluate_model(model, val_loader, device, criterion)
         #print('duration:', t1-t0,'- train loss: ',avg_epoch_loss,' - train accuracy: ',avg_epoch_accuracy,' - validation accuracy: ', accuracy,' - validation loss: ', loss)
         print('duration: %d s - train loss: %.5f - train accuracy: %.2f - validation loss: %.2f - validation accuracy: %.2f ' %(t1-t0, avg_epoch_loss, avg_epoch_accuracy, loss, accuracy))
         train_loss_hist.append(avg_epoch_loss)
